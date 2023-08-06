@@ -1,0 +1,45 @@
+version: '3.8'
+
+x-faraway-build: &default-faraway-build
+  image: debian:bullseye-slim
+  env_file: ${ENV_FILE}
+  profiles:
+    - default
+  volumes:
+    - ./dist/server:/usr/local/bin/server
+    - ./dist/client:/usr/local/bin/client
+  networks:
+    - faraway
+
+services:
+
+  server:
+    container_name: faraway-server
+    <<: *default-faraway-build
+    command: "server"
+
+  client:
+    container_name: faraway-client
+    <<: *default-faraway-build
+    depends_on:
+      - server
+    command: "client"
+
+  test-executor:
+    profiles:
+      - testing
+    image: alpine:3
+    volumes:
+      - ./tools/dist/run_e2e:/usr/local/bin/run_e2e
+      - ./tools/dist/venom:/usr/local/bin/venom
+      - ./test-outputs:/outputs
+      - ./test:/test
+    env_file: ${ENV_FILE}
+    entrypoint: /usr/local/bin/run_e2e
+    command: ${SUITE:-*/*/*.yml}
+    networks:
+      - faraway
+
+networks:
+  faraway:
+    driver: bridge
