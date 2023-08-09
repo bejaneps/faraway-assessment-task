@@ -1,0 +1,10 @@
+#!/bin/sh
+
+IFS=$'\n'
+for commit_msg in $(git log --format=%s --no-merges main..$local_sha); do
+    if [[ ! "$commit_msg" =~ ^(build|ci|chore|docs|feat|fix|perf|refactor|revert|style|test)(\(.*\))?(\!)?:[[:space:]].* ]]; then
+        echo "ERROR: Invalid commit message : ${commit_msg}";
+        echo "Please see the commit rules : https://github.com/bejaneps/faraway-assessment-task#commit-guidelines";
+        exit 1;
+    fi
+done

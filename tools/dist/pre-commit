@@ -1,0 +1,15 @@
+#!/bin/sh
+
+IS_TOOLS_SOURCE_MODIFIED=$(git diff --cached --name-only | grep -q "tools/" && echo "yes")
+IS_TOOLS_DIST_MODIFIED=$(git diff --cached --name-only | grep -q "tools/dist" && echo "yes")
+
+if [[ "$IS_TOOLS_SOURCE_MODIFIED" == "yes" && "$IS_TOOLS_DIST_MODIFIED" != "yes" ]]; then
+    echo "--- Modified files ---"
+    echo "\n"
+    echo $(git diff --cached --name-only)
+    echo "\n"
+    echo "Forgot rebuilding binaries after 'tools' source code ?"
+    echo "Please update build by running 'make build' command in 'tools/' directory"
+    echo "\n"
+    exit 1
+fi

@@ -1,99 +1,98 @@
 package server
 
 import (
-	"bufio"
+	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"errors"
 	"fmt"
-	"math"
 	"math/big"
-	"net"
 	"strconv"
 
+	"github.com/bejaneps/faraway-assessment-task/internal/pkg/log"
 	"github.com/bejaneps/faraway-assessment-task/internal/pkg/transport"
+	repoServer "github.com/bejaneps/faraway-assessment-task/internal/repository/server"
 )
 
 const (
-	numberRangeUpperBound = math.MaxInt64
-	numberRangeMax        = 5 // could be dynamically changed depending on server load
+	maxRandomNumber = 2_000_000 // it takes quite some time to find a number in this range
 
 	incorectGuess = "incorrect guess"
 )
 
-// ErrNumberNotFound is used after client fails to guess number in max attempts
-var ErrNumberNotFound = errors.New("number wasn't found in max attempts")
+// ErrNumberNotFound is used after client fails to guess number
+var ErrNumberNotFound = errors.New("number wasn't found")
+
+// Challenger is wrapper for POW challenge-respond algorithm
+type Challenger interface {
+	// Challenge challenges client with a specific algorithm to solve
+	Challenge(ctx context.Context, rw transport.ReadWriter) error
+}
 
 type Service struct {
-	numberRangeUpperBoundBig *big.Int
-	numberRangeMaxBig        *big.Int
+	maxRandomNumberBig *big.Int
+	quoter             repoServer.Quoter
 }
 
-func New() *Service {
+func New(quoter repoServer.Quoter) *Service {
 	return &Service{
-		numberRangeUpperBoundBig: big.NewInt(numberRangeUpperBound),
-		numberRangeMaxBig:        big.NewInt(numberRangeMax),
+		maxRandomNumberBig: big.NewInt(maxRandomNumber),
+		quoter:             quoter,
 	}
 }
 
-func (s *Service) Challenge(conn net.Conn) error {
+func (s *Service) Challenge(ctx context.Context, rw transport.ReadWriter) error {
 	// generate random number and send it to client, so he starts guessing
-	number, min, max, err := s.getRandomNumberAndRange()
+	number, hash, err := randomNumberGenerator(s.maxRandomNumberBig)
 	if err != nil {
-		return fmt.Errorf("failed to generate random number: %w", err)
+		return fmt.Errorf("failed to generate random number and calculate it's hash: %w", err)
 	}
-	numberChallenge := prepareNumberRangeChallenge(min, max)
-	err = transport.WriteMessage(conn, numberChallenge)
+	log.FromContext(ctx).Debug("sending random number to client", log.Int64("number", number.Int64()), log.String("hash", hash))
+	if err := rw.WriteMessage(hash); err != nil {
+		return fmt.Errorf("failed to send random number: %w", err)
+	}
+
+	// read guess number
+	msg, err := rw.ReadMessage()
 	if err != nil {
-		return fmt.Errorf("failed to send initial number range challenge: %w", err)
+		return fmt.Errorf("failed to read guess number: %w", err)
+	}
+	log.FromContext(ctx).Debug("read guess number from client", log.String("number", msg))
+	guess, err := strconv.Atoi(msg)
+	if err != nil {
+		return fmt.Errorf("failed to convert to int guess message: %w", err)
 	}
 
-	// read guess number messages, until number is guessed correctly
-	reader := bufio.NewReader(conn)
-	for i := 0; i < numberRangeMax; i++ {
-		msg, err := transport.ReadMessage(reader)
-		if err != nil {
-			return fmt.Errorf("failed to read guess number: %w", err)
+	// if value was guessed wrong, send incorect guess message
+	if int64(guess) != number.Int64() {
+		if err := rw.WriteMessage(incorectGuess); err != nil {
+			return fmt.Errorf("failed to send incorrect guess message: %w", err)
 		}
 
-		guess, err := strconv.Atoi(msg)
-		if err != nil {
-			return fmt.Errorf("failed to convert to int guess message: %w", err)
-		}
-
-		if int64(guess) == number.Int64() {
-			return nil
-		}
-
-		err = transport.WriteMessage(conn, incorectGuess)
-		if err != nil {
-			return fmt.Errorf("failed to send incorrect message: %w", err)
-		}
+		return ErrNumberNotFound
 	}
 
-	return ErrNumberNotFound
+	// if value was guessed correct, get value from repo and send it
+	quote, err := s.quoter.Quote(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get random quote: %w", err)
+	}
+	if err := rw.WriteMessage(quote); err != nil {
+		return fmt.Errorf("failed to send quote: %w", err)
+	}
+
+	return nil
 }
 
-// getRandomNumberAndRange generates a random number in range of n and n+5
-// where n is any number between 0 and max.Int64, it also returns min and max values
-// which are n and n+5
-func (s *Service) getRandomNumberAndRange() (number *big.Int, min, max int64, err error) {
-	number, err = rand.Int(rand.Reader, s.numberRangeUpperBoundBig)
+var randomNumberGenerator = getRandomNumberAndHash
+
+func getRandomNumberAndHash(max *big.Int) (*big.Int, string, error) {
+	number, err := rand.Int(rand.Reader, max)
 	if err != nil {
-		return nil, 0, 0, fmt.Errorf("failed to generate random number: %w", err)
+		return nil, "", fmt.Errorf("failed to generate random number: %w", err)
 	}
 
-	min, max = number.Int64(), number.Int64()+numberRangeMax
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%d", number.Int64())))
 
-	numberInRange, err := rand.Int(rand.Reader, s.numberRangeMaxBig)
-	if err != nil {
-		return nil, 0, 0, fmt.Errorf("failed to generate random number range: %w", err)
-	}
-
-	number.Add(number, numberInRange)
-
-	return number, min, max, nil
-}
-
-func prepareNumberRangeChallenge(min, max int64) string {
-	return fmt.Sprintf("%d-%d", min, max)
+	return number, fmt.Sprintf("%x", sum[:]), nil
 }

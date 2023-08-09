@@ -4,10 +4,12 @@ import (
 	"context"
 	"time"
 
-	"github.com/bejaneps/faraway-assessment-task/internal/client"
+	_ "github.com/bejaneps/faraway-assessment-task/internal/pkg/debug" // prints debug info
+
 	"github.com/bejaneps/faraway-assessment-task/internal/pkg/log"
 	"github.com/bejaneps/faraway-assessment-task/internal/pkg/runtime"
 	serviceClient "github.com/bejaneps/faraway-assessment-task/internal/service/client"
+	"github.com/bejaneps/faraway-assessment-task/internal/transport/client"
 	"github.com/caarlos0/env/v9"
 )
 
@@ -28,7 +30,7 @@ func main() {
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	ctx = log.ContextWithAttributes(ctx, log.Attributes{"serverAddr": serverAddr})
 
-	service := serviceClient.New()
+	service := serviceClient.New(0)
 	c := client.New(service)
 	err := runtime.RunUntilSignal(
 		func() error { // start func
