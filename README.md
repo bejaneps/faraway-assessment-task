@@ -18,31 +18,34 @@ Design and implement “Word of Wisdom” tcp server.
 2. Run application
 
 ```
-$ make run
+make run
 ```
 
-API should be available on http://localhost:4500.
+## Makefile
 
-## E2E Tests
-
-ovh/venom package is used for e2e testing, it's easy to use and configure. All test cases are located in `test/` folder, test cases are written in .yml format.
-
-To run e2e tests locally do:
+To run unit tests
 
 ```
-make e2e-test-build
-make e2e-test
+make test-unit
 ```
 
-To run e2e tests in Github pipeline:
+To run integration tests **without Docker**
 
 ```
-Open pr
-Set pr to draft and then ready for review
-Check actions, e2e tests should be running
+make test-integration
 ```
 
-E2e tests are also triggered when pr is merged to main
+To run integration tests **with Docker**
+
+```
+make docker-test-integration
+```
+
+To see test coverage
+
+```
+make test-coverage
+```
 
 ## Commit guidelines
 
@@ -57,11 +60,39 @@ E2e tests are also triggered when pr is merged to main
 
 ## Linter
 
-We are using golangci-lint **v1.53.3** as primary linter. To use it run:
+golangci-lint **v1.53.3** is used as primary linter. To use it run:
 
 ```
 make deps
 make lint
 ```
 
-It's integrated into CI, so if your code fails on linter it won't pass CI.
+## Algorithm
+
+For this project I decided to use simple sha256 checksum algorithm. In simple words, server generates a random number in [0 ... 2_000_000] range, calculates it's sha256 hashsum and sends to client. Client reads the hashsum and starts searching for a number in range [0 ... 2_000_000] until hashes are equal. If they are equal, client sends found number to server, server checks validity and sends random quote back.
+
+Quotes are stored statically in database and cache, the reason that they are not fetched from external service(API) is because almost all quotes services are paid and require authentication with token or username/password :() . In future if such service would be enhanced, then a separate endpoint could be added for adding new quotes to database and cache.
+
+## Project Structure
+
+A project is divided by client and server domains.
+
+* Transport layer(internal/transport) is uppermost layer which is responsible for dealing with transport components
+* Service layer(internal/service) is middle layer which is responsible for application's business logic
+* Repository layet(internal/repository) is lowermost layer which is responsible for dealing with database or cache
+
+Each layer is separated in a way that it doesn't know anything about it's lower layer except exposed interfaces, this way we ensure that upper layers don't depend on implementations of lower layers.
+
+Seeds are used to pre-populate cache and database so we have initial data to work with and test, they are located at internal/pkg/quotes/quotes.json . They are run in cmd/migrations
+
+Each service is built locally and then copied to debian image, this is faster approach for local testings
+
+## TODO
+
+1. Add github action for running all types of tests
+2. Implement e2e tests ovh/venom
+3. Add github action for release
+4. Add github action for linter
+5. Add tests for transport layer
+6. Add unit tests for db package
+7. Add github action for building and pushing image to registry

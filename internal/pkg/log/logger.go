@@ -91,12 +91,12 @@ func init() {
 			NameKey:        "logger",
 			CallerKey:      "caller",
 			MessageKey:     "msg",
-			StacktraceKey:  "stacktrace",
 			LineEnding:     zapcore.DefaultLineEnding,
 			EncodeLevel:    zapcore.LowercaseLevelEncoder,
 			EncodeTime:     zapcore.ISO8601TimeEncoder,
 			EncodeDuration: zapcore.SecondsDurationEncoder,
 		},
+		DisableStacktrace: true,
 	}
 
 	l, err := loggerConfig.Build(zap.AddCallerSkip(1))

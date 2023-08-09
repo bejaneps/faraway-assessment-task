@@ -1,73 +1,81 @@
 package client
 
 import (
-	"bufio"
 	"context"
+	"crypto/sha256"
+	"errors"
 	"fmt"
-	"net"
-	"strconv"
-	"strings"
 
 	"github.com/bejaneps/faraway-assessment-task/internal/pkg/log"
 	"github.com/bejaneps/faraway-assessment-task/internal/pkg/transport"
 )
 
 const (
-	msgNumbersLen       = 2
-	msgNumbersSeparator = "-"
+	maxRandomNumber = 2_000_000 // it takes quite some time to find a number in this range
 
 	incorectGuess = "incorrect guess"
 )
 
-type Service struct{}
+// ErrNumberNotFound is used after client fails to guess number
+var ErrNumberNotFound = errors.New("number wasn't found")
 
-func New() *Service {
-	return &Service{}
+// Responder is wrapper for POW challenge-respond algorithm
+type Responder interface {
+	// Respond tries to solve challenge from server
+	Respond(ctx context.Context, rw transport.ReadWriter) error
 }
 
-func (s *Service) Respond(ctx context.Context, conn net.Conn) error {
-	reader := bufio.NewReader(conn)
+type Service struct {
+	upperNumberSearchLimit int64
+}
 
-	// read first message and get number range
-	msg, err := transport.ReadMessage(reader)
+func New(upperNumberSearchLimit int64) *Service {
+	if upperNumberSearchLimit == 0 {
+		upperNumberSearchLimit = maxRandomNumber
+	}
+
+	return &Service{
+		upperNumberSearchLimit: upperNumberSearchLimit,
+	}
+}
+
+func (s *Service) Respond(ctx context.Context, rw transport.ReadWriter) error {
+	// read hash of number
+	msg, err := rw.ReadMessage()
 	if err != nil {
-		return fmt.Errorf("failed to read first message: %w", err)
+		return fmt.Errorf("failed to read hash: %w", err)
 	}
+	log.FromContext(ctx).Debug("received hash from server", log.String("hash", msg))
 
-	minMax := strings.Split(msg, msgNumbersSeparator)
-	if len(minMax) < msgNumbersLen {
-		return fmt.Errorf("incorrect message: %s", msg)
-	}
+	// iterate over all numbers until max and check if hash is equal to server one
+	number := 0
+	for i := 0; i < int(s.upperNumberSearchLimit); i++ {
+		hash := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("%d", i))))
 
-	minStr, maxStr := minMax[0], minMax[1]
-	min, err := strconv.Atoi(minStr)
-	if err != nil {
-		return fmt.Errorf("failed to parse number range min %s: %w", minStr, err)
-	}
-	max, err := strconv.Atoi(maxStr)
-	if err != nil {
-		return fmt.Errorf("failed to parse number range max %s: %w", maxStr, err)
-	}
-
-	log.FromContext(ctx).Info(
-		"received number range from server",
-		log.Int("min", min), log.Int("max", max),
-	)
-
-	for i := min; i < max; i++ {
-		if err := transport.WriteMessage(conn, fmt.Sprintf("%d", i)); err != nil {
-			return fmt.Errorf("failed to send guess number: %w", err)
-		}
-
-		msg, err := transport.ReadMessage(reader)
-		if err != nil {
-			return err
-		}
-		if msg != "" && msg != incorectGuess {
-			fmt.Println(msg)
-			return nil
+		if hash == msg {
+			number = i
+			break
 		}
 	}
+	if number == 0 {
+		return ErrNumberNotFound
+	}
+
+	// if hash was equal, then send the number to server
+	log.FromContext(ctx).Debug("sending guess number to server", log.Int("number", number))
+	if err := rw.WriteMessage(fmt.Sprintf("%d", number)); err != nil {
+		return fmt.Errorf("failed to send guess number: %w", err)
+	}
+
+	// check if number was guessed correctly
+	msg, err = rw.ReadMessage()
+	if err != nil {
+		return fmt.Errorf("failed to read quote message: %w", err)
+	}
+	if msg == "" || msg == incorectGuess {
+		return fmt.Errorf("failed to guess number, msg from server: %s", msg)
+	}
+	log.FromContext(ctx).Info("received quote from server", log.String("quote", msg))
 
 	return nil
 }

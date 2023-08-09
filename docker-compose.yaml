@@ -14,20 +14,72 @@ x-faraway-build: &default-faraway-build
 services:
 
   server:
-    container_name: faraway-server
+    expose:
+      - "${SERVER_PORT}"
     <<: *default-faraway-build
     command: "server"
 
   client:
-    container_name: faraway-client
     <<: *default-faraway-build
     depends_on:
       - server
     command: "client"
 
-  test-executor:
+  migrations:
+    build:
+      context: .
+      dockerfile: dockerfiles/migrations.Dockerfile
+    env_file:
+      - ${ENV_FILE}
+    networks:
+      - faraway
     profiles:
-      - testing
+      - migration
+
+  postgresdb:
+    image: postgres:14.8
+    expose:
+      - "5432"
+    ports:
+      - 5432:5432
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=faraway-db
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    command: "-c log_statement=all"
+    networks:
+      - faraway
+    profiles:
+      - database
+
+  redis:
+    image: "redis:7-alpine"
+    expose:
+      - "6379"
+    ports:
+      - 6379:6379
+    volumes:
+      - redis:/data
+    command: redis-server
+    networks:
+      - faraway
+    profiles:
+      - cache
+
+  integration-test:
+    build:
+      context: .
+      dockerfile: dockerfiles/integration-test.Dockerfile
+    env_file:
+      - .env
+    networks:
+      - faraway
+    profiles:
+      - integration-test
+
+  test-executor:
     image: alpine:3
     volumes:
       - ./tools/dist/run_e2e:/usr/local/bin/run_e2e
@@ -39,6 +91,12 @@ services:
     command: ${SUITE:-*/*/*.yml}
     networks:
       - faraway
+    profiles:
+      - testing
+
+volumes:
+  redis:
+  db-data:
 
 networks:
   faraway:

@@ -1,0 +1,4 @@
+#!/bin/sh
+
+sleep 30 # wait until services load
+/usr/local/bin/venom run "/test/${1:-*/*/*.yml}" --var=APP_PORT=${APP_PORT} --var=DB_DSN=${DB_DSN} --lib-dir=/test-lib --stop-on-failure --output-dir=/outputs -v
